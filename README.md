@@ -32,6 +32,7 @@ loop *inside* the node**, keeping the resolution fixed across the chain to avoid
 | --- | --- |
 | **Story Frame Generator** | Reads frame JSON, generates the full sequence (t2i then chained i2i) in one node. Returns all frames as one IMAGE batch and saves them to disk. |
 | **Simple Image Generator** | Single image from a prompt. Optional `reference_image` switches it to image-to-image (edit) mode. |
+| **Simple Image Generator (Multiple)** | Same as above, but accepts **multiple reference images** (up to 8). Reference slots appear dynamically — connect one and the next empty slot opens automatically. Works with zero references (text-to-image) too. |
 | **JSON Frame Extractor** | Parses the frame JSON; outputs prompt lists, per-type counts, and human-readable preview strings for debugging. |
 | **Convert To Integer / Float / String / Boolean** | Small type-conversion utilities. |
 
@@ -185,6 +186,62 @@ Inputs:
 Outputs:
 - `image`
 - `log`
+
+---
+
+## Simple Image Generator (Multiple)
+
+The multi-reference version of **Simple Image Generator**. Everything is identical —
+same Flux2-style conditioning, same loaders, same sampler settings — except it can take
+**several reference images at once** (up to 8) instead of just one.
+
+| Node |
+| --- |
+| ![Simple Image Generator (Multiple) node](screenshots/simple-image-generator-multiple.png) |
+
+The reference inputs are **dynamic**: the node starts with a single `reference_image_1`
+slot, and as soon as you connect an image a new empty `reference_image_2` slot appears
+right below it — up to a maximum of 8. Disconnect a reference and the extra empty slots
+collapse again, so you only ever see "the references you've connected + one spare slot".
+With no references connected at all, it behaves as a plain text-to-image generator.
+
+### How it differs from Simple Image Generator
+
+- **Single node, `Simple Image Generator`** has one fixed `reference_image` input → one mode switch (text-to-image vs. single-reference edit).
+- **`Simple Image Generator (Multiple)`** has `reference_image_1 … reference_image_8`, added/removed on demand by the bundled web extension (`web/zfrnodes.js`), so you don't manage eight empty slots by hand.
+- With multiple references connected, **every** reference is VAE-encoded and appended to the positive conditioning as a `ReferenceLatent`, so the model can blend/condition on all of them at once (Flux2 multi-reference editing).
+- All references are resized to the **first reference's** output size so their latents stay dimensionally consistent.
+- Otherwise the inputs/outputs (`prompt`, model loaders, LoRA, `width/height`, `steps`, `cfg`, `guidance`, `denoise`, `sampler_name`, `scheduler`, `seed`, `reference_megapixels`, `reference_size_mode`, `image`, `log`) are the same as `Simple Image Generator`.
+
+> **Note:** because the extra reference slots are added by a frontend script, this node needs a **full ComfyUI restart** (not just a browser refresh) after installing/updating, so `web/zfrnodes.js` is registered.
+
+### Examples
+
+The screenshots below show the node driven by an LLM-generated prompt, taking product /
+character reference photos and compositing them into a single result.
+
+| Example |
+| --- |
+| ![Multiple reference example 1](screenshots/simple-image-generator-multiple-1.png) |
+
+**Full pipeline — reference images → LLM prompt → result.** On the left, two `Load Image`
+nodes feed reference photos (a face/character and a product) into the dynamic reference
+slots. An LLM (`LLM-Image-For-Prompt-Generator`) writes a detailed prompt describing how
+the references should be combined, that prompt drives **Simple Image Generator (Multiple)**,
+and the node returns a single composited image on the right. This is the typical use case:
+let the language model describe the scene while the node grounds it in your real reference
+photos.
+
+| Example |
+| --- |
+| ![Multiple reference example 2](screenshots/simple-image-generator-multiple-2.png) |
+
+**Reference-grounded product/character shot.** The same setup with the model holding the
+referenced product. Because each reference is injected as its own `ReferenceLatent`, the
+output keeps the subject's identity *and* the product's appearance from the separate
+reference photos — useful for marketing visuals, product placement, character + prop
+continuity, and mood boards where several real inputs must appear together in one generated
+frame.
 
 ---
 

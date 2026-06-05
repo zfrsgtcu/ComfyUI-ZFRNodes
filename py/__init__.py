@@ -5,6 +5,7 @@ from .convert_to_boolean import ConvertToBoolean
 from .json_frame_extractor import JsonFrameExtractor
 from .story_frame_generator import StoryFrameGenerator
 from .simple_image_generator import SimpleImageGenerator
+from .simple_image_generator_multiple import SimpleImageGeneratorMultiple
 
 __all__ = [
     "ConvertToInteger",
@@ -14,4 +15,5 @@ __all__ = [
     "JsonFrameExtractor",
     "StoryFrameGenerator",
     "SimpleImageGenerator",
+    "SimpleImageGeneratorMultiple",
 ]
