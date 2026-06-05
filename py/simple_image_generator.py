@@ -43,6 +43,7 @@ class SimpleImageGenerator:
                 "steps": ("INT", {"default": 8, "min": 1, "max": 200}),
                 "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 30.0, "step": 0.1}),
                 "guidance": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "euler"}),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
@@ -147,6 +148,7 @@ class SimpleImageGenerator:
         steps,
         cfg,
         guidance,
+        denoise,
         sampler_name,
         scheduler,
         seed,
@@ -191,7 +193,7 @@ class SimpleImageGenerator:
 
         (out_latent,) = nodes.common_ksampler(
             model, cur_seed, steps, cfg, sampler_name, scheduler,
-            positive, negative, latent, denoise=1.0,
+            positive, negative, latent, denoise=denoise,
         )
         image = self._vae_decode(vae, out_latent["samples"])
 
