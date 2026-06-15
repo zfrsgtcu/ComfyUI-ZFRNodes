@@ -14,7 +14,29 @@ six samplers or queue the graph repeatedly.
 
 | Story preview | Workflow |
 | --- | --- |
-| ![Story sequence preview](screenshots/story-generator-priview.png) | ![Full story workflow](screenshots/story-frame-generator-workflow.png) |
+| ![Story sequence preview](screenshots/story-generator-preview.png) | ![Full story workflow](screenshots/story-frame-generator-workflow.png) |
+
+---
+
+## What's new in 1.1.0
+
+This release turns the pack from "render a story JSON" into a full **idea → consistent visual story** pipeline. You can now write one short sentence (in any language) and let the nodes plan the prompts, lock character identity with reference sheets, and render the whole sequence.
+
+**New nodes**
+
+| Node | One-liner |
+| --- | --- |
+| **Story Director** | Turn a short idea (any language) into the exact system + user prompt an LLM needs to produce story JSON. Per-scene boxes, per-scene t2i/i2i type, reference awareness. |
+| **Asset Sheet Director** | Build prompts for reusable **character / object reference sheets** (front / side / action / back, or your own custom views). |
+| **Sheet Compositor** | Crop the generated sheets to their content and lay them out side by side into one clean **contact sheet**. |
+| **Prompt Guide** | Pull model-specific prompting guides (`t2i` / `i2i` / `both`) straight from the bundled docs. |
+| **Reference Image Loader** | Upload several reference images directly inside the node and output them as one IMAGE batch. |
+
+**Improvements to existing nodes**
+
+- **Simple Image Generator (Multiple)** — now takes **one batched `reference_images` input** (connect a Reference Image Loader directly) instead of wiring slots one by one. Added a reference **thumbnail preview**, `save_to_disk`, and aspect-preserving sizing (no stretch / squash / crop).
+- **Story Frame Generator** — optional **`reference_images`** input: connect a contact sheet and every frame is conditioned on it, so character identity stays locked across the whole story.
+- **All generators** — `clip_type` is now pulled **dynamically from ComfyUI** (≈23 types: `flux2`, `sd3`, `wan`, `qwen_image`, `hidream`, `chroma`, …) instead of a fixed 5-item list.
 
 ---
 
@@ -28,20 +50,42 @@ loop *inside* the node**, keeping the resolution fixed across the chain to avoid
 
 ## Nodes (category: `zfr-nodes`)
 
+**Story / sequence generation**
+
 | Node | What it does |
 | --- | --- |
-| **Story Frame Generator** | Reads frame JSON, generates the full sequence (t2i then chained i2i) in one node. Returns all frames as one IMAGE batch and saves them to disk. |
-| **Simple Image Generator** | Single image from a prompt. Optional `reference_image` switches it to image-to-image (edit) mode. |
-| **Simple Image Generator (Multiple)** | Same as above, but accepts **multiple reference images** (up to 8). Reference slots appear dynamically — connect one and the next empty slot opens automatically. Works with zero references (text-to-image) too. |
+| **Story Frame Generator** | Reads frame JSON, generates the full sequence (t2i then chained i2i) in one node. Optional `reference_images` keeps character identity across frames. Returns all frames as one IMAGE batch and saves them to disk. |
+| **Story Director** | Converts a short, free-text idea (any language) into the `system_prompt` + `user_prompt` an LLM needs to output valid story JSON. Dynamic per-scene boxes, per-scene t2i/i2i choice, reference-aware. |
 | **JSON Frame Extractor** | Parses the frame JSON; outputs prompt lists, per-type counts, and human-readable preview strings for debugging. |
+
+**Single image / references**
+
+| Node | What it does |
+| --- | --- |
+| **Simple Image Generator** | Single image from a prompt. Optional `reference_image` switches it to image-to-image (edit) mode. |
+| **Simple Image Generator (Multiple)** | Multi-reference version. Takes one batched `reference_images` input, splits it internally, and conditions on every reference at once. Works with zero references (text-to-image) too. |
+| **Reference Image Loader** | Upload multiple reference images inside the node (no `Load Image` chains); outputs them as a single IMAGE batch + count. |
+
+**Character / asset sheets**
+
+| Node | What it does |
+| --- | --- |
+| **Asset Sheet Director** | Builds prompts for reusable character / object reference sheets (configurable views + asset type). |
+| **Sheet Compositor** | Auto-crops generated sheets to their content and arranges them side by side into one contact sheet. |
+
+**Helpers**
+
+| Node | What it does |
+| --- | --- |
+| **Prompt Guide** | Loads bundled model-specific prompting docs by mode (`t2i` / `i2i` / `both`). |
 | **Convert To Integer / Float / String / Boolean** | Small type-conversion utilities. |
 
 ## Requirements
 
-- ComfyUI with Flux-style model support, ideally a Flux2-compatible build such as `flux-2-klein`.
+- ComfyUI with Flux-style model support, ideally a Flux2-compatible build such as `flux-2-klein` (the image-to-image / reference path relies on Flux2's `ReferenceLatent`).
 - Python packages: `numpy`, `torch`, `Pillow` (these are usually already installed by ComfyUI).
-- A compatible diffusion model, VAE, and text encoder for the chosen `clip_type`.
-- For LLM-driven prompt generation, the ComfyUI Ollama node: https://github.com/stavsap/comfyui-ollama.
+- A compatible diffusion model, VAE, and text encoder for the chosen `clip_type` (the `clip_type` list is pulled live from ComfyUI, so all supported types show up automatically).
+- For LLM-driven prompt generation (Story Director / Asset Sheet Director), the ComfyUI Ollama node: https://github.com/stavsap/comfyui-ollama. A **vision-capable** model (e.g. `qwen3.5:9b`) is recommended if you want the LLM to read reference contact sheets.
 - A `requirements.txt` file is included for quick dependency installation with `pip install -r requirements.txt`.
 
 ## Installation
@@ -85,6 +129,21 @@ You can give the system a natural-language directive instead of carefully engine
 - Character progression or transformation sequences
 - Marketing visuals, mood boards, and cinematic frames
 - Reference-based editing and continuity between frames
+
+### Full identity-locked story pipeline
+
+For a story where the same character must stay consistent across every frame, the nodes chain like this:
+
+```
+1. Asset Sheet Director → Ollama → Story Frame Generator   →  character/object sheets
+2. Sheet Compositor                                        →  one contact sheet
+3. Story Director → Ollama (+ contact sheet) → Story Frame Generator (reference_images)
+```
+
+You only write a short idea. Step 1–2 build a reference sheet of your cast; step 3 plans the
+story and renders it while every frame is conditioned on that sheet — so the character keeps
+its look from start to finish. For a simpler run, skip steps 1–2 and use **Story Director →
+Ollama → Story Frame Generator** on its own.
 
 ## Example workflows
 
@@ -199,21 +258,22 @@ same Flux2-style conditioning, same loaders, same sampler settings — except it
 | --- |
 | ![Simple Image Generator (Multiple) node](screenshots/simple-image-generator-multiple.png) |
 
-The reference inputs are **dynamic**: the node starts with a single `reference_image_1`
-slot, and as soon as you connect an image a new empty `reference_image_2` slot appears
-right below it — up to a maximum of 8. Disconnect a reference and the extra empty slots
-collapse again, so you only ever see "the references you've connected + one spare slot".
-With no references connected at all, it behaves as a plain text-to-image generator.
+It takes **one batched `reference_images` input**: connect a [Reference Image Loader](#reference-image-loader)
+(or any IMAGE batch) and the node splits it internally into `image 1, image 2, …` — no
+slot-by-slot wiring. After a run, a small **thumbnail strip** of the references used is
+shown at the top of the node. With nothing connected it behaves as a plain
+text-to-image generator.
 
 ### How it differs from Simple Image Generator
 
-- **Single node, `Simple Image Generator`** has one fixed `reference_image` input → one mode switch (text-to-image vs. single-reference edit).
-- **`Simple Image Generator (Multiple)`** has `reference_image_1 … reference_image_8`, added/removed on demand by the bundled web extension (`web/zfrnodes.js`), so you don't manage eight empty slots by hand.
-- With multiple references connected, **every** reference is VAE-encoded and appended to the positive conditioning as a `ReferenceLatent`, so the model can blend/condition on all of them at once (Flux2 multi-reference editing).
-- All references are resized to the **first reference's** output size so their latents stay dimensionally consistent.
-- Otherwise the inputs/outputs (`prompt`, model loaders, LoRA, `width/height`, `steps`, `cfg`, `guidance`, `denoise`, `sampler_name`, `scheduler`, `seed`, `reference_megapixels`, `reference_size_mode`, `image`, `log`) are the same as `Simple Image Generator`.
+- **`Simple Image Generator`** has one fixed `reference_image` input → one mode switch (text-to-image vs. single-reference edit).
+- **`Simple Image Generator (Multiple)`** takes one `reference_images` IMAGE **batch** and splits it internally (up to 8), so you connect a single wire instead of managing eight slots.
+- **Every** reference is VAE-encoded and appended to the positive conditioning as its own `ReferenceLatent`, so the model can condition on all of them at once (Flux2 multi-reference editing).
+- **Aspect-preserving sizing** — `match_first_reference` or `fit_to_width_height`; references are scaled with their aspect ratio kept (no stretch / squash / crop).
+- Adds **`save_to_disk` / `output_subdir` / `filename_prefix`** for writing the result straight to disk.
+- Otherwise the inputs/outputs (`prompt`, model loaders, LoRA, `width/height`, `steps`, `cfg`, `guidance`, `denoise`, `sampler_name`, `scheduler`, `seed`, `image`, `log`) are the same as `Simple Image Generator`.
 
-> **Note:** because the extra reference slots are added by a frontend script, this node needs a **full ComfyUI restart** (not just a browser refresh) after installing/updating, so `web/zfrnodes.js` is registered.
+> **Note:** the node's UI (thumbnail strip, output-mode select) is added by a frontend script, so it needs a **full ComfyUI restart** (not just a browser refresh) after installing/updating, so `web/zfrnodes.js` is registered.
 
 ### Examples
 
@@ -292,6 +352,7 @@ reference-latent editing), so an entire story is produced from one node in a sin
 - `seed`, `seed_mode` — `fixed`, `increment`, or `random` per frame.
 - `reference_megapixels` — reference size for the `scale_to_megapixels` mode (default 1.0 MP).
 - `i2i_size_mode` — `scale_to_megapixels` (default) or `match_first_frame` (see *Resolution stability*).
+- *(optional)* `reference_images` — an IMAGE batch (e.g. a contact sheet from **Sheet Compositor**). When connected, **every frame** is additionally conditioned on these references, so character identity stays consistent across the whole sequence. Leave it empty for the original reference-free behavior.
 - `save_to_disk`, `output_subdir`, `filename_prefix` — disk output (default `output/story_frames/frame_###.png`).
 
 ### Outputs
@@ -329,6 +390,117 @@ t2i and i2i each have their own LoRA, strength, and trigger words, so they can u
 different LoRAs. Trigger words are prepended to that frame's prompt (`trigger, <prompt>`)
 before encoding — how LoRAs that need activation keywords get triggered. Leave a trigger
 empty to add nothing; set a LoRA to `None` to run that stage without one.
+
+---
+
+## Story Director
+
+Writes the **prompts for the prompt writer**. You give a short idea; Story Director outputs
+a clean `system_prompt` + `user_prompt` for an LLM (e.g. Ollama) so the model returns valid
+story JSON that **Story Frame Generator** can render directly. No prompt-engineering required.
+
+| Node UI | Output (system + user prompt) |
+| --- | --- |
+| ![Story Director node](screenshots/Story-Director.png) | ![Story Director prompt preview](screenshots/Story-Director-Preview.png) |
+
+### Inputs
+
+| Input | Purpose |
+| --- | --- |
+| `user_input` | Your idea — a single short sentence, in **any language** (output prompts are always English). Used when `frame_count = auto`. |
+| `frame_count` | `auto` (LLM decides) or a fixed number. Pick a number and **N per-scene boxes appear** below the node — one direction per frame. |
+| `scene_mode` | `auto` / `static_camera` / `tracking_camera` / `orbiting_camera` / `cutscene` / `storyboard` — guides how the shots are staged. |
+| `style` | Leave empty (LLM chooses) or set one, e.g. `anime`, `noir`, `comic book`. |
+| `has_references` | Turn **on** when you've connected a reference image to your Ollama node, so the LLM refers to subjects as "the cat in Picture 1" instead of describing them. |
+| *(optional)* `guide_t2i`, `guide_i2i` | Connect **Prompt Guide** outputs to ground prompt wording in model-specific docs. |
+
+### Per-scene boxes
+
+When `frame_count` is a fixed number, each scene gets its own text box **and a t2i/i2i type
+select** (`Auto` keeps the standard layout: frame 1 = text_to_image, the rest = image_to_image;
+or force a type per scene). Leave the type on `Auto` and just write the action — or mix types
+freely. The node packs everything into the `user_prompt` so the LLM produces exactly that
+many frames, in order.
+
+### Outputs
+
+- `system_prompt` → your Ollama node's **system** input.
+- `user_prompt` → your Ollama node's **prompt** input.
+
+> Story Director only writes text — it never calls a model itself. Wire its outputs into an
+> Ollama (or any LLM) node, set the LLM output format to JSON, then feed the result into
+> **Story Frame Generator**.
+
+---
+
+## Reference Image Loader
+
+Upload reference images **inside the node** — no chains of `Load Image` nodes. Pick several
+files, see them as a compact thumbnail table, reorder/remove, and the node outputs them as a
+single IMAGE **batch** ready for the multi-reference generators.
+
+![Reference Image Loader node](screenshots/Reference-Image-Loader.png)
+
+- "⬆ Upload images" button → choose one or many files (max 8).
+- Each upload appears as `image 1, image 2, …`; click a row to expand/collapse the preview.
+- **Output mode** select: `Single Batch`, `Separate Images`, or `Batch + Separate`.
+- Outputs a `batch` IMAGE and a `count`. Different-sized images are combined without cropping
+  or stretching (transparent letterbox), so the batch stays consistent.
+
+Typical wiring: **Reference Image Loader → Simple Image Generator (Multiple)** (`reference_images`),
+or **→ Story Frame Generator** (`reference_images`).
+
+---
+
+## Asset Sheet Director & Sheet Compositor
+
+These two build **reusable character / object reference sheets** so a subject looks the same
+across an entire story.
+
+**Asset Sheet Director** writes prompts (system + user) for an LLM to output sheet JSON. For
+each detected character/object it produces a set of views — the first is `text_to_image`
+(a clean reference plate on a plain grey background) and the rest are `image_to_image` edits
+that rotate/re-pose the *same* individual, so all views look like one subject.
+
+| Input | Purpose |
+| --- | --- |
+| `user_input` | The subject(s) — any language. e.g. `characters: cat, dog`. |
+| `asset_type` | `auto` (LLM classifies each) / `character` / `object`. |
+| `views` | Empty = default (character: front, side, action, back · object: front, side, three-quarter, back) — or your own comma-separated list, any number. |
+| `style` | Empty (LLM chooses) or a named style. |
+| *(optional)* `guide_t2i`, `guide_i2i` | Prompt Guide grounding. |
+
+**Sheet Compositor** takes the rendered sheet images (an IMAGE batch), detects each figure
+against the plain grey background, **crops to content**, scales them to a common height, and
+lays them side by side into one tidy **contact sheet** — ideal as a single reference image
+for **Story Director** (`has_references = true`) + **Story Frame Generator** (`reference_images`).
+
+| Input | Purpose |
+| --- | --- |
+| `sheets` | IMAGE batch of generated sheets. |
+| `row_height` | Common height all figures are scaled to. |
+| `spacing` | Gap between figures and around the edges. |
+| `padding_pct` | Small margin kept around each detected figure. |
+| `bg_threshold` | How far a pixel must differ from `#d9d9d9` to count as foreground. |
+
+---
+
+## Prompt Guide
+
+Loads the bundled **model-specific prompting guides** so you (or an LLM) write prompts the way
+each model expects. Pick a model folder and a mode; the node concatenates the matching
+markdown docs into one STRING.
+
+![Prompt Guide node](screenshots/prompt-guide-preview.png)
+
+| Input | Purpose |
+| --- | --- |
+| `model` | Auto-listed from `docs/models/` (e.g. `flux2`, `sdxl`, `sd15`, `pony`, `z-image`). |
+| `mode` | `t2i`, `i2i`, or **`both`** (returns the text-to-image and image-to-image guides together, labeled). |
+| `strip_jsx` | Removes JSX/React snippets from the docs, leaving clean readable guidance. |
+
+Connect the `guide` output to **Story Director** / **Asset Sheet Director** (`guide_t2i` /
+`guide_i2i`) to ground their wording in the chosen model's documentation.
 
 ---
 

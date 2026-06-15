@@ -12,6 +12,8 @@ import folder_paths
 
 import nodes  # common_ksampler, loaders
 
+from .clip_types import clip_type_input
+
 
 class SimpleImageGenerator:
     """
@@ -34,7 +36,7 @@ class SimpleImageGenerator:
                 "unet_name": (folder_paths.get_filename_list("diffusion_models"),),
                 "vae_name": (folder_paths.get_filename_list("vae"),),
                 "clip_name": (folder_paths.get_filename_list("text_encoders"),),
-                "clip_type": (["flux2", "flux", "sd3", "sdxl", "stable_diffusion"], {"default": "flux2"}),
+                "clip_type": clip_type_input("flux2"),
                 "lora_name": (["None"] + folder_paths.get_filename_list("loras"),),
                 "lora_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "trigger_words": ("STRING", {"multiline": False, "default": ""}),
@@ -53,7 +55,13 @@ class SimpleImageGenerator:
                 # Bağlanırsa image_to_image (düzenleme), boş bırakılırsa text_to_image.
                 "reference_image": ("IMAGE",),
                 "reference_megapixels": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 16.0, "step": 0.01}),
-                "reference_size_mode": (["scale_to_megapixels", "match_width_height"], {"default": "scale_to_megapixels"}),
+                # scale_to_megapixels  : oranı koru, megapixel'e göre ölçekle (önerilen)
+                # fit_width_height     : oranı koru, width x height kutusuna sığdır (deformasyon YOK)
+                # stretch_width_height : width x height'a tam ger (eski davranış; oran bozulabilir)
+                "reference_size_mode": (
+                    ["scale_to_megapixels", "fit_width_height", "stretch_width_height"],
+                    {"default": "scale_to_megapixels"},
+                ),
             },
         }
 
@@ -122,6 +130,20 @@ class SimpleImageGenerator:
         s = comfy.utils.common_upscale(samples, width, height, upscale_method, "disabled")
         return s.movedim(1, -1)
 
+    def _fit_keep_aspect(self, image, target_w, target_h, upscale_method="lanczos"):
+        """
+        Referansın EN-BOY oranını koruyarak target_w x target_h kutusuna
+        sığdıracak boyuta ölçekler. Görsel GERİLMEZ; çıktı boyutu referans
+        oranına uyar. Sonuç 8'in katına yuvarlanır (latent uyumu).
+        """
+        src_h, src_w = int(image.shape[1]), int(image.shape[2])
+        if src_w == 0 or src_h == 0:
+            return image
+        scale = min(target_w / src_w, target_h / src_h)
+        new_w = max(8, (int(round(src_w * scale)) // 8) * 8)
+        new_h = max(8, (int(round(src_h * scale)) // 8) * 8)
+        return self._resize_to(image, new_w, new_h, upscale_method)
+
     def _vae_encode(self, vae, image):
         return vae.encode(image[:, :, :, :3])
 
@@ -178,9 +200,13 @@ class SimpleImageGenerator:
             mode_label = "text_to_image"
         else:
             # ---- image_to_image (referans görseli düzenle) ----
-            if reference_size_mode == "match_width_height":
+            if reference_size_mode == "stretch_width_height":
+                # Eski davranış: width x height'a tam ger (oran bozulabilir).
                 ref = self._resize_to(reference_image, width, height)
-            else:  # scale_to_megapixels
+            elif reference_size_mode == "fit_width_height":
+                # Oranı koru, width x height kutusuna sığdır (deformasyon YOK).
+                ref = self._fit_keep_aspect(reference_image, width, height)
+            else:  # scale_to_megapixels — oranı koru, megapixel'e göre ölçekle
                 ref = self._scale_to_megapixels(reference_image, reference_megapixels)
             out_h, out_w = int(ref.shape[1]), int(ref.shape[2])
 

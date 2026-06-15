@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-ZFRNodes"
 description = "Story / sequence image generation for ComfyUI: generate a whole consistent multi-frame story from one JSON prompt in a single node, plus single-image text-to-image / image-to-image and small JSON & type helpers."
-version = "1.0.1"
+version = "1.1.0"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"

@@ -16,6 +16,8 @@ import folder_paths
 
 import nodes  # common_ksampler, loaders
 
+from .clip_types import clip_type_input
+
 
 class StoryFrameGenerator:
     """
@@ -45,7 +47,7 @@ class StoryFrameGenerator:
                 "unet_name": (folder_paths.get_filename_list("diffusion_models"),),
                 "vae_name": (folder_paths.get_filename_list("vae"),),
                 "clip_name": (folder_paths.get_filename_list("text_encoders"),),
-                "clip_type": (["flux2", "flux", "sd3", "sdxl", "stable_diffusion"], {"default": "flux2"}),
+                "clip_type": clip_type_input("flux2"),
                 "lora_name_t2i": (["None"] + folder_paths.get_filename_list("loras"),),
                 "lora_strength_t2i": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "trigger_words_t2i": ("STRING", {"multiline": False, "default": ""}),
@@ -66,6 +68,12 @@ class StoryFrameGenerator:
                 "i2i_size_mode": (["scale_to_megapixels", "match_first_frame"], {"default": "scale_to_megapixels"}),
             },
             "optional": {
+                # Çoklu referans görsel (IMAGE batch). Bağlanırsa HER frame bu
+                # referanslardan (Flux2 ReferenceLatent) beslenir: t2i frame'ler
+                # doğrudan, i2i frame'ler ise önceki frame zincirine EK olarak.
+                # Böylece karakter kimliği (sheet'ler) tüm sahnelerde korunur.
+                # Boş bırakılırsa eski davranış (referanssız) sürer.
+                "reference_images": ("IMAGE",),
                 "save_to_disk": ("BOOLEAN", {"default": True}),
                 "output_subdir": ("STRING", {"default": "story_frames"}),
                 "filename_prefix": ("STRING", {"default": "frame"}),
@@ -161,6 +169,39 @@ class StoryFrameGenerator:
         s = comfy.utils.common_upscale(samples, width, height, upscale_method, "disabled")
         return s.movedim(1, -1)
 
+    @staticmethod
+    def _round8(v):
+        """v'yi en YAKIN 8'in katına yuvarlar (.5 yukarı; min 8)."""
+        return max(8, int((float(v) + 4) // 8) * 8)
+
+    def _fit_keep_aspect(self, image, target_w, target_h, upscale_method="lanczos"):
+        """
+        Referansın EN-BOY oranını koruyarak target_w x target_h kutusuna
+        sığdıracak boyuta ölçekler. GERME/ÇEKME/KIRPMA YOK; çıktı boyutu
+        referans oranına uyar (8'in katına yuvarlanır, latent uyumu).
+        """
+        src_h, src_w = int(image.shape[1]), int(image.shape[2])
+        if src_w == 0 or src_h == 0:
+            return image
+        scale = min(target_w / src_w, target_h / src_h)
+        new_w = self._round8(src_w * scale)
+        new_h = self._round8(src_h * scale)
+        return self._resize_to(image, new_w, new_h, upscale_method)
+
+    @staticmethod
+    def _split_reference_batch(images):
+        """
+        IMAGE batch'ini ([N,H,W,C]) tek tek referanslara böler: her biri
+        [1,H,W,C]. None ise boş liste; tek görsel (N=1) sorunsuz çalışır.
+        """
+        if images is None:
+            return []
+        try:
+            n = int(images.shape[0])
+        except Exception:
+            return []
+        return [images[i:i + 1] for i in range(n)]
+
     def _vae_encode(self, vae, image):
         # ComfyUI VAEEncode ile birebir: tek tensör döndürür ({"samples": t} değil).
         return vae.encode(image[:, :, :, :3])
@@ -201,11 +242,16 @@ class StoryFrameGenerator:
         seed_mode,
         reference_megapixels,
         i2i_size_mode="scale_to_megapixels",
+        reference_images=None,
         save_to_disk=True,
         output_subdir="story_frames",
         filename_prefix="frame",
     ):
         import random
+
+        # Çoklu referans görsel: tek batch'i tek tek referanslara böl. SADECE
+        # ilk text_to_image frame'inde kullanılır (aşağıda is_first dalında).
+        init_references = self._split_reference_batch(reference_images)
 
         data = self._parse_json(prompts_json)
         frames = data.get("frames", [])
@@ -263,11 +309,24 @@ class StoryFrameGenerator:
                 # ---- text_to_image ----
                 # İlk frame kullanıcının verdiği width/height ile üretilir.
                 frame_w, frame_h = width, height
+                # Referans görseller HER text_to_image frame'inde kullanılır:
+                # her sahne, verilen referans kimliklerinden (sheet'ler) beslenir.
+                # Çıktı boyutu yine width/height'tır; referanslar oran KORUNARAK
+                # bu kutuya sığdırılır (germe/çekme/kırpma YOK). Flux2 her referansı
+                # ayrı ReferenceLatent olarak işlediği için boyut eşitliği gerekmez.
+                if init_references:
+                    for ref_img in init_references:
+                        ref = self._fit_keep_aspect(ref_img, frame_w, frame_h)
+                        ref_latent = self._vae_encode(vae, ref)
+                        positive = self._reference_latent(positive, ref_latent)
+                        del ref, ref_latent
+                    mode_label = "text_to_image (x%d ref)" % len(init_references)
+                else:
+                    mode_label = "text_to_image"
                 positive = self._flux_guidance(positive, guidance)
                 negative = self._zero_out(positive)
                 latent = self._empty_latent(frame_w, frame_h)
                 model = model_t2i
-                mode_label = "text_to_image"
             else:
                 # ---- image_to_image (önceki frame'i referans al) ----
                 # i2i boyutu zincir boyunca BİR KEZ belirlenir, sonra sabit kalır
@@ -287,13 +346,28 @@ class StoryFrameGenerator:
                     ref = self._resize_to(prev_image, i2i_w, i2i_h)
 
                 frame_w, frame_h = i2i_w, i2i_h
+                # 1) Zincir referansı: bir önceki frame'in çıktısı (devamlılık).
                 ref_latent = self._vae_encode(vae, ref)
                 positive = self._reference_latent(positive, ref_latent)
+                # 2) Kullanıcı referansları: HER i2i frame'ine de eklenir; böylece
+                #    karakter kimliği (sheet'ler) her sahnede korunur. Önceki frame
+                #    + verilen referanslar birlikte (Flux2 her birini ayrı işler).
+                extra_ref_latents = []
+                if init_references:
+                    for ref_img in init_references:
+                        eref = self._fit_keep_aspect(ref_img, frame_w, frame_h)
+                        eref_latent = self._vae_encode(vae, eref)
+                        positive = self._reference_latent(positive, eref_latent)
+                        extra_ref_latents.append(eref_latent)
+                        del eref
                 positive = self._flux_guidance(positive, guidance)
                 negative = self._zero_out(positive)
                 latent = self._empty_latent(frame_w, frame_h)
                 model = model_i2i
-                mode_label = "image_to_image"
+                mode_label = (
+                    "image_to_image (x%d ref)" % len(init_references)
+                    if init_references else "image_to_image"
+                )
 
             (out_latent,) = nodes.common_ksampler(
                 model, cur_seed, steps, cfg, sampler_name, scheduler,
@@ -321,6 +395,8 @@ class StoryFrameGenerator:
             del positive, negative, latent, out_latent
             if not is_first:
                 del ref, ref_latent
+                for erl in extra_ref_latents:
+                    del erl
             comfy.model_management.soft_empty_cache()
 
         if not results:

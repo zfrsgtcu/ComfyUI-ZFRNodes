@@ -6,6 +6,11 @@ from .json_frame_extractor import JsonFrameExtractor
 from .story_frame_generator import StoryFrameGenerator
 from .simple_image_generator import SimpleImageGenerator
 from .simple_image_generator_multiple import SimpleImageGeneratorMultiple
+from .prompt_guide import PromptGuide
+from .reference_image_loader import ReferenceImageLoader
+from .story_director import StoryDirector
+from .asset_sheet_director import AssetSheetDirector
+from .sheet_compositor import SheetCompositor
 
 __all__ = [
     "ConvertToInteger",
@@ -16,4 +21,9 @@ __all__ = [
     "StoryFrameGenerator",
     "SimpleImageGenerator",
     "SimpleImageGeneratorMultiple",
+    "PromptGuide",
+    "ReferenceImageLoader",
+    "StoryDirector",
+    "AssetSheetDirector",
+    "SheetCompositor",
 ]
