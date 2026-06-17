@@ -251,11 +251,17 @@ function setupReferenceLoaderUI(node) {
 
     const uploadBtn = document.createElement("button");
     uploadBtn.textContent = "⬆ Upload images";
+    uploadBtn.title = "Click to choose files — or drag & drop images here, or select this node and press Ctrl+V";
     uploadBtn.style.cssText =
         "padding:6px 10px;border:1px solid #555;border-radius:6px;background:#2a2a2a;" +
         "color:#eee;cursor:pointer;font-size:12px;width:100%;box-sizing:border-box;";
     uploadBtn.onmouseenter = () => (uploadBtn.style.background = "#383838");
     uploadBtn.onmouseleave = () => (uploadBtn.style.background = "#2a2a2a");
+
+    // Sürükle-bırak / yapıştır ipucu (buton altında, soluk).
+    const hint = document.createElement("div");
+    hint.textContent = "or drag & drop / paste (Ctrl+V)";
+    hint.style.cssText = "font-size:10px;color:#666;text-align:center;";
 
     const counter = document.createElement("div");
     counter.style.cssText = "font-size:11px;color:#888;text-align:center;";
@@ -296,6 +302,7 @@ function setupReferenceLoaderUI(node) {
     fileInput.style.display = "none";
 
     footer.appendChild(uploadBtn);
+    footer.appendChild(hint);
     footer.appendChild(counter);
     footer.appendChild(modeRow);
     root.appendChild(list);
@@ -383,7 +390,7 @@ function setupReferenceLoaderUI(node) {
     // Bir satırın (kapalı/açık) yaklaşık yüksekliği — node yüksekliği için.
     const ROW_H = 40;          // kapalı satır (thumbnail + padding)
     const ROW_EXPANDED_H = 280; // açık satır (büyük görsel)
-    const FOOTER_H = 96;        // buton + sayaç + mod select + border
+    const FOOTER_H = 116;       // buton + ipucu + sayaç + mod select + border
     const PADDING_H = 12;
 
     // DOM widget'ın node içinde kaplayacağı yüksekliği hesaplar; böylece
@@ -526,10 +533,17 @@ function setupReferenceLoaderUI(node) {
         return await resp.json(); // { name, subfolder, type }
     }
 
-    fileInput.onchange = async () => {
-        const files = Array.from(fileInput.files || []);
-        fileInput.value = ""; // aynı dosya tekrar seçilebilsin.
-        for (const file of files) {
+    /*
+     * Bir dosya listesini (file picker / sürükle-bırak / yapıştır) tek tek
+     * yükler ve tabloya ekler. MAX sınırını aşmaz, görsel olmayanları atlar.
+     */
+    async function addFiles(files) {
+        const list = Array.from(files || []).filter(
+            (f) => f && (f.type ? f.type.startsWith("image/") : true)
+        );
+        if (!list.length) return;
+        let added = 0;
+        for (const file of list) {
             if (state.items.length >= RIL_MAX_IMAGES) break;
             try {
                 const data = await uploadFile(file);
@@ -539,19 +553,112 @@ function setupReferenceLoaderUI(node) {
                     type: data.type || "input",
                     expanded: false,
                 });
+                added++;
             } catch (err) {
                 console.error("[ZFRNodes] Reference image upload failed:", err);
             }
         }
-        writeValue();
-        render();
-        refreshOutputs();
-        resize();
+        if (added) {
+            writeValue();
+            render();
+            refreshOutputs();
+            resize();
+        }
+    }
+
+    fileInput.onchange = async () => {
+        const files = Array.from(fileInput.files || []);
+        fileInput.value = ""; // aynı dosya tekrar seçilebilsin.
+        await addFiles(files);
     };
 
     uploadBtn.onclick = () => {
         if (state.items.length >= RIL_MAX_IMAGES) return;
         fileInput.click();
+    };
+
+    // ---- sürükle-bırak ----
+    // Görsel dosyalarını doğrudan node'un UI'ına bırakınca ekler. dragover'da
+    // varsayılanı engellemek "drop"un tetiklenmesi için şart; ComfyUI canvas'ı
+    // olayı kapmasın diye stopPropagation da yapılır.
+    function isImageDrag(e) {
+        const dt = e.dataTransfer;
+        if (!dt) return false;
+        if (dt.files && dt.files.length) return true;
+        return Array.from(dt.items || []).some((it) => it.kind === "file");
+    }
+    root.addEventListener("dragover", (e) => {
+        if (!isImageDrag(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "copy";
+        root.style.outline = "2px dashed #5a7da0";
+        root.style.outlineOffset = "-2px";
+    });
+    root.addEventListener("dragleave", (e) => {
+        e.stopPropagation();
+        root.style.outline = "";
+    });
+    root.addEventListener("drop", async (e) => {
+        if (!isImageDrag(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        root.style.outline = "";
+        const files = e.dataTransfer.files;
+        if (files && files.length) await addFiles(files);
+    });
+
+    // ---- yapıştır (Ctrl+V) ----
+    // Bu node SEÇİLİYKEN (başlık çubuğu dahil) veya UI'ı üzerindeyken pano'daki
+    // görseli ekler. CAPTURE fazında dinlenir ki ComfyUI'nin kendi paste
+    // handler'ından ÖNCE çalışsın ve Load Image node'u oluşturmasını engellesin
+    // (stopImmediatePropagation).
+    let hovered = false;
+    root.addEventListener("pointerenter", () => (hovered = true));
+    root.addEventListener("pointerleave", () => (hovered = false));
+
+    function isTargetNode() {
+        if (hovered) return true;
+        if (node.selected) return true;
+        const sel = node.graph && node.graph.selected_nodes;
+        if (sel) {
+            // selected_nodes bir obje (id->node) veya dizi olabilir.
+            if (Array.isArray(sel)) return sel.includes(node);
+            return Object.values(sel).includes(node);
+        }
+        return false;
+    }
+
+    const onPaste = async (e) => {
+        if (!isTargetNode()) return;
+        // Metin alanına (textarea/input) yapıştırılıyorsa karışma.
+        const t = e.target;
+        if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
+
+        const items = (e.clipboardData && e.clipboardData.items) || [];
+        const files = [];
+        for (const it of items) {
+            if (it.kind === "file" && it.type && it.type.startsWith("image/")) {
+                const f = it.getAsFile();
+                if (f) files.push(f);
+            }
+        }
+        if (files.length) {
+            // ComfyUI'nin global paste'ini (Load Image oluşturma) tamamen durdur.
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            await addFiles(files);
+        }
+    };
+    // Capture = true: ComfyUI'nin document-level handler'ından önce yakalanır.
+    document.addEventListener("paste", onPaste, true);
+    // Node silinince listener'ı temizle (sızıntı olmasın). Capture'da
+    // eklendiği için capture'da kaldırılmalı.
+    const onRemovedPaste = node.onRemoved;
+    node.onRemoved = function () {
+        document.removeEventListener("paste", onPaste, true);
+        return onRemovedPaste ? onRemovedPaste.apply(this, arguments) : undefined;
     };
 
     // Kayıtlı dosya adlarından tabloyu ve modu kur.
