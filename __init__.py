@@ -11,6 +11,13 @@ from .py.reference_image_loader import ReferenceImageLoader
 from .py.story_director import StoryDirector
 from .py.asset_sheet_director import AssetSheetDirector
 from .py.sheet_compositor import SheetCompositor
+from .py.reference_image_loader_path import ReferenceImageLoaderPath
+from .py.dataset_prep import DatasetPrep
+from .py.caption_generator import CaptionGenerator
+from .py.inpaint_studio import InpaintStudio
+
+# Path tabanlı klasör erişimi için server endpoint'lerini kaydet.
+from .py import path_server  # noqa: F401
 
 
 NODE_CLASS_MAPPINGS = {
@@ -27,6 +34,10 @@ NODE_CLASS_MAPPINGS = {
     "Story Director": StoryDirector,
     "Asset Sheet Director": AssetSheetDirector,
     "Sheet Compositor": SheetCompositor,
+    "Reference Image Loader (Path)": ReferenceImageLoaderPath,
+    "Dataset Prep": DatasetPrep,
+    "Caption Generator": CaptionGenerator,
+    "Inpaint Studio (ZFRNodes)": InpaintStudio,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -43,6 +54,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Story Director": "Story Director",
     "Asset Sheet Director": "Asset Sheet Director",
     "Sheet Compositor": "Sheet Compositor",
+    "Reference Image Loader (Path)": "Reference Image Loader (Path)",
+    "Dataset Prep": "Dataset Prep",
+    "Caption Generator": "Caption Generator",
+    "Inpaint Studio (ZFRNodes)": "Inpaint Studio (ZFRNodes)",
 }
 
 # Dinamik referans inputları için web (frontend) eklentisi dizini.

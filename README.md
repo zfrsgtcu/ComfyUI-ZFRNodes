@@ -2,8 +2,10 @@
 
 > Generate a **whole, consistent multi-frame story** from a single JSON prompt — in one node, one queue run.
 
-ComfyUI custom nodes for **story / sequence image generation** and single-image
-text-to-image + image-to-image, plus a few small type/JSON helper nodes.
+ComfyUI custom nodes for **story / sequence image generation**, single-image
+text-to-image + image-to-image, an in-node **inpainting studio**, a folder-based
+**LoRA dataset pipeline** (batch generation + LLM captioning), plus a few small
+type/JSON helper nodes.
 
 The headline node, **Story Frame Generator**, takes a JSON describing a sequence of frames
 (first a text-to-image shot, then image-to-image edits) and produces the entire chain
@@ -18,9 +20,28 @@ six samplers or queue the graph repeatedly.
 
 ---
 
+## What's new in 1.1.1
+
+This release adds a **dataset-building pipeline** — pull reference images straight from a
+folder on disk, batch-generate variations from them, caption every image with a vision-LLM,
+and edit any single image with a full mask-painting node — plus a cleaner contact-sheet preview.
+
+**New nodes**
+
+| Node | One-liner |
+| --- | --- |
+| **Reference Image Loader (Path)** | Point at a folder on disk (native folder picker or a pasted path) and load every image inside it as one IMAGE batch — no manual multi-upload. |
+| **Dataset Prep** | Batch-run image-to-image or text-to-image generation over a whole folder of references in one node, saving every result to disk — for building LoRA training datasets. |
+| **Caption Generator** | Send each image in a folder to a vision-LLM (Ollama, OpenAI, Anthropic, DeepSeek, Google, OpenRouter) and write a training-ready `.txt` caption next to it. |
+| **Inpaint Studio** | A self-contained "mini Photoshop" node: load an image, paint a mask with ComfyUI's built-in Mask Editor, and inpaint just that area — model loading, masking, and sampling all in one node. |
+
+**Improvements to existing nodes**
+
+- **Sheet Compositor** — now has a screenshot in this README showing an actual before/after contact sheet.
+
 ## What's new in 1.1.0
 
-This release turns the pack from "render a story JSON" into a full **idea → consistent visual story** pipeline. You can now write one short sentence (in any language) and let the nodes plan the prompts, lock character identity with reference sheets, and render the whole sequence.
+This release turned the pack from "render a story JSON" into a full **idea → consistent visual story** pipeline. You can write one short sentence (in any language) and let the nodes plan the prompts, lock character identity with reference sheets, and render the whole sequence.
 
 **New nodes**
 
@@ -65,6 +86,13 @@ loop *inside* the node**, keeping the resolution fixed across the chain to avoid
 | **Simple Image Generator** | Single image from a prompt. Optional `reference_image` switches it to image-to-image (edit) mode. |
 | **Simple Image Generator (Multiple)** | Multi-reference version. Takes one batched `reference_images` input, splits it internally, and conditions on every reference at once. Works with zero references (text-to-image) too. |
 | **Reference Image Loader** | Upload multiple reference images inside the node (no `Load Image` chains); outputs them as a single IMAGE batch + count. |
+| **Reference Image Loader (Path)** | Point at a folder on disk instead of uploading one by one; loads every image inside as a single IMAGE batch + folder path + count. |
+
+**Inpainting**
+
+| Node | What it does |
+| --- | --- |
+| **Inpaint Studio** | Load an image, paint a mask with ComfyUI's Mask Editor, and inpaint just the masked area — model loading, masking, and sampling all inside one node. |
 
 **Character / asset sheets**
 
@@ -72,6 +100,13 @@ loop *inside* the node**, keeping the resolution fixed across the chain to avoid
 | --- | --- |
 | **Asset Sheet Director** | Builds prompts for reusable character / object reference sheets (configurable views + asset type). |
 | **Sheet Compositor** | Auto-crops generated sheets to their content and arranges them side by side into one contact sheet. |
+
+**Dataset & captioning**
+
+| Node | What it does |
+| --- | --- |
+| **Dataset Prep** | Batch-generates image-to-image or text-to-image results over a whole folder of references, saving every output to disk — for building LoRA training datasets. |
+| **Caption Generator** | Sends each image in a folder to a vision-LLM and writes a training-ready `.txt` caption next to it (image-name-matched, for LoRA trainers). |
 
 **Helpers**
 
@@ -86,6 +121,7 @@ loop *inside* the node**, keeping the resolution fixed across the chain to avoid
 - Python packages: `numpy`, `torch`, `Pillow` (these are usually already installed by ComfyUI).
 - A compatible diffusion model, VAE, and text encoder for the chosen `clip_type` (the `clip_type` list is pulled live from ComfyUI, so all supported types show up automatically).
 - For LLM-driven prompt generation (Story Director / Asset Sheet Director), the ComfyUI Ollama node: https://github.com/stavsap/comfyui-ollama. A **vision-capable** model (e.g. `qwen3.5:9b`) is recommended if you want the LLM to read reference contact sheets.
+- **Caption Generator** talks to its LLM provider directly (no separate Ollama node needed) — install `pip install ollama` if you use the `ollama` provider, or `pip install requests` for any of the API providers (`openai`, `deepseek`, `google`, `openrouter`, `anthropic`). Most ComfyUI installs already have `requests`.
 - A `requirements.txt` file is included for quick dependency installation with `pip install -r requirements.txt`.
 
 ## Installation
@@ -452,6 +488,34 @@ or **→ Story Frame Generator** (`reference_images`).
 
 ---
 
+## Reference Image Loader (Path)
+
+The folder-based counterpart to **Reference Image Loader**: instead of uploading files one by
+one, point the node at a folder on disk and it loads **every image inside** automatically.
+
+- "📁 Select folder" button opens your OS's **native folder picker** (Windows/macOS/Linux),
+  or paste a path directly into the field.
+- The frontend shows the folder's contents as a **carousel** — file name, resolution, arrow
+  navigation, click-to-zoom, open-in-new-tab.
+- Different-sized images are combined without cropping or stretching (transparent letterbox),
+  same as Reference Image Loader.
+- Re-runs automatically when the folder's contents change (file added/removed/modified).
+
+Outputs:
+- `images` — the folder's images as one IMAGE batch.
+- `folder_path` — the resolved folder path (STRING) — feeds **Dataset Prep**'s output naming.
+- `image_count` — number of images loaded.
+
+| Input | Purpose |
+| --- | --- |
+| `folder_path` | Filled by the folder picker (or paste a path yourself). |
+| `max_images` | Cap how many images to load (`0` = all) — useful for quick dataset previews. |
+
+Typical wiring: **Reference Image Loader (Path) → Dataset Prep** (`images`), or into any other
+node that accepts an IMAGE batch.
+
+---
+
 ## Asset Sheet Director & Sheet Compositor
 
 These two build **reusable character / object reference sheets** so a subject looks the same
@@ -483,6 +547,77 @@ for **Story Director** (`has_references = true`) + **Story Frame Generator** (`r
 | `padding_pct` | Small margin kept around each detected figure. |
 | `bg_threshold` | How far a pixel must differ from `#d9d9d9` to count as foreground. |
 
+![Sheet Compositor result](screenshots/sheet-compositor.png)
+
+---
+
+## Dataset Prep & Caption Generator
+
+These two turn a folder of reference images into a ready-to-train **LoRA dataset**: Dataset
+Prep generates the images, Caption Generator writes the matching text files.
+
+### Dataset Prep
+
+Runs the same Flux2-style generation logic as **Simple Image Generator (Multiple)**, but
+loops it over an entire folder of references (typically from **Reference Image Loader (Path)**)
+and saves every result to disk — one node call instead of queuing the graph per image.
+
+| Mode | What happens |
+| --- | --- |
+| `image_to_image` | Every input image is used as a reference; the prompt describes how to transform it (e.g. pushing a set of scraped photos toward one consistent style). |
+| `text_to_image` | Input images are ignored; the prompt alone generates `num_images` (or one per input image if `num_images = 0`) independent images. |
+
+- Loads the model/VAE/CLIP/LoRA **once** and reuses them for every image — much faster than
+  re-running a single-image node in a loop.
+- `seed_mode = increment` (default) advances the seed by one each image, so outputs vary
+  instead of repeating.
+- `reference_size_mode`: `match_reference` (keep each input's own aspect ratio) or
+  `fit_to_width_height` (fit into a fixed `width`×`height` box, aspect preserved).
+- Frees GPU memory after each image, so large folders don't run out of VRAM mid-batch.
+
+Outputs: `images` (all results as one batch, for a quick preview), `log` (per-image seed/size/
+save status), `count`.
+
+Typical wiring: **Reference Image Loader (Path) → Dataset Prep** (`images`, `output_dir` from
+`folder_path` if you want it alongside the source folder).
+
+### Caption Generator
+
+Sends every image in a folder to a **vision-capable LLM** and writes a training-ready caption
+`.txt` file next to each one (`cat_01.jpg` → `cat_01.txt`) — the format LoRA trainers expect.
+
+![Caption Generator node](screenshots/caption-generator.png)
+
+- **Providers**: `ollama` (local/remote, e.g. `qwen2.5vl`, `llava`) or any OpenAI-compatible /
+  Anthropic API — `openai`, `deepseek`, `google`, `openrouter`, `anthropic`. Non-Ollama
+  providers need an `api_key`.
+- Images are sent in small groups (`batch_size`, default 3) so the LLM's context doesn't get
+  overloaded, and the group prompt tells the model exactly which file names to use, in order.
+- The LLM must reply with a JSON array of `{image_name, prompt_text}`; the node **does not
+  trust the LLM's returned file names** — it matches captions back to real files strictly by
+  order, so a typo in the model's output never mislabels an image.
+- Ships with a default `system_prompt` tuned for **Flux 2 LoRA training**: describe exactly
+  what's visible (ethnicity, appearance, clothing, environment, lighting) and avoid vague
+  words like "beautiful" or "stunning" — fully editable if you want a different captioning
+  style.
+
+| Input | Purpose |
+| --- | --- |
+| `folder_path` | Filled by the same folder picker as Reference Image Loader (Path). |
+| `provider`, `api_key`, `base_url`, `model` | LLM connection. For Ollama, `base_url` and a "Refresh models" button fill `model` automatically. |
+| `batch_size`, `temperature`, `top_p`, `num_ctx`, `seed`, `think` | Standard LLM sampling controls. |
+| `system_prompt`, `user_prompt` | Fully editable — override the default captioning instructions. |
+| `max_images` | Cap how many images to caption (`0` = all). |
+| `write_txt`, `output_txt_folder` | Whether to write `.txt` files, and where (empty = next to the source images). |
+
+Outputs: `captions_json` (all captions as one JSON array), `log`, `count`.
+
+> **Note:** Caption Generator reads straight from disk (its own `folder_path`), not from a
+> connected IMAGE batch — there's no graph wire between it and Dataset Prep. Run Dataset Prep
+> first, then point Caption Generator's folder picker at Dataset Prep's `output_dir` to caption
+> the results it just saved. That takes you from "a folder of source photos" to "a captioned
+> LoRA dataset" in two node runs.
+
 ---
 
 ## Prompt Guide
@@ -491,7 +626,9 @@ Loads the bundled **model-specific prompting guides** so you (or an LLM) write p
 each model expects. Pick a model folder and a mode; the node concatenates the matching
 markdown docs into one STRING.
 
-![Prompt Guide node](screenshots/prompt-guide-preview.png)
+| Node | Preview |
+| --- | --- |
+| ![Prompt Guide node](screenshots/Prompt-guide.png) | ![Prompt Guide output preview](screenshots/prompt-guide-preview.png) |
 
 | Input | Purpose |
 | --- | --- |
@@ -501,6 +638,35 @@ markdown docs into one STRING.
 
 Connect the `guide` output to **Story Director** / **Asset Sheet Director** (`guide_t2i` /
 `guide_i2i`) to ground their wording in the chosen model's documentation.
+
+---
+
+## Inpaint Studio
+
+A self-contained "mini Photoshop" node: load an image, paint a mask directly on it, and
+inpaint just the masked area — model loading, masking, and sampling all live in **one node**,
+so there's no separate Load Image → Mask Editor → InpaintModelConditioning → KSampler chain
+to wire up.
+
+- **⬆ Load Image** — upload a file, drag-and-drop it onto the node, or paste with Ctrl+V while
+  the node is selected.
+- **🖌 Mask Editor** — opens ComfyUI's built-in Mask Editor on the loaded image; paint the area
+  you want regenerated, hit Save, and the mask is embedded in the image's alpha channel — the
+  preview updates automatically once the mask is saved.
+- Settings are organized into tabs (**Model · Inpaint · Generation · Output**) instead of one
+  long scrolling list of widgets.
+
+| Tab | Key settings |
+| --- | --- |
+| **Model** | `unet_name`, `vae_name`, `clip_name`, `clip_type`, `lora_name` / `lora_strength`, `trigger_words`, `use_references` (toggle optional `reference_images` — what should appear in the masked area). |
+| **Inpaint** | `denoise`, `grow_mask` / `feather_mask` (expand/soften the mask edges), `noise_mask`, `differential_diffusion` (smoother blending at the mask boundary), `composite_back` (paste the result back onto the untouched original outside the mask). |
+| **Generation** | `steps`, `cfg`, `guidance`, `sampler_name`, `scheduler`, `seed` / `seed_mode`. |
+| **Output** | `save_to_disk`, `output_subdir`, `filename_prefix`. |
+
+If the mask is left empty, the node warns and returns the original image unchanged instead of
+generating — a safeguard against accidentally running inpaint with nothing painted.
+
+Outputs: `image` (the inpainted result), `log`.
 
 ---
 
