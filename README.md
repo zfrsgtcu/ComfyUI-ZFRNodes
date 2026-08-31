@@ -668,6 +668,29 @@ generating — a safeguard against accidentally running inpaint with nothing pai
 
 Outputs: `image` (the inpainted result), `log`.
 
+### Plain prompt-driven inpaint
+
+With `use_references` off, the masked area is repainted purely from the text `prompt` — e.g.
+mask the hair and write "Change hair color to red". Everything outside the mask stays
+pixel-identical (`composite_back` keeps it locked).
+
+![Inpaint Studio — prompt-only inpaint](screenshots/inpaint-studio.png)
+
+### Reference-guided inpaint (adding an object into the mask)
+
+Turn `use_references` **on** and connect an IMAGE to `reference_images` (a `Load Image` node,
+a Reference Image Loader, or any IMAGE output) and the masked area can pull in **content from
+that reference** instead of just following the text prompt — e.g. mask the bag and write
+"add the logo shown in image 1 to the bag" to transfer a logo from a separate reference image
+onto the product in the masked region.
+
+![Inpaint Studio — reference-guided inpaint](screenshots/inpaint-add.png)
+
+This uses the same Flux2 `ReferenceLatent` mechanism as **Simple Image Generator (Multiple)** —
+the reference is VAE-encoded and injected into the positive conditioning alongside the prompt,
+so the model has both "what to do" (prompt) and "what it should look like" (reference) to work
+from.
+
 ---
 
 ## Notes / compatibility
